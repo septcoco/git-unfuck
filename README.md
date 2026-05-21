@@ -1,4 +1,5 @@
 # git unfuck
+![demo](demo.gif)
 
 A friendly recovery tool for git disasters. Run `git unfuck` when you've lost commits, deleted the wrong branch, got stuck mid-rebase, or have no idea what just happened.
 
