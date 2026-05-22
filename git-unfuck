@@ -3,15 +3,17 @@ import subprocess
 import sys
 import re
 import time
+import os
 from pathlib import Path
 
-G = "\033[32m"
-R = "\033[31m"
-Y = "\033[33m"
-B = "\033[34m"
-D = "\033[2m"
-W = "\033[1m"
-X = "\033[0m"
+_color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+G = "\033[32m" if _color else ""
+R = "\033[31m" if _color else ""
+Y = "\033[33m" if _color else ""
+B = "\033[34m" if _color else ""
+D = "\033[2m" if _color else ""
+W = "\033[1m" if _color else ""
+X = "\033[0m" if _color else ""
 
 
 def sh(cmd, check=False):
@@ -114,6 +116,8 @@ def scan():
     parents = out(["git", "log", "-1", "--format=%P"]).split()
     if len(parents) > 1:
         f.add("recent_merge")
+    if ok(["git", "rev-parse", "--verify", "ORIG_HEAD"]):
+        f.add("orig_head")
     return f
 
 
@@ -274,8 +278,6 @@ def recover_deleted_branch():
                 continue
             seen.add(name)
             if not ok(["git", "show-ref", "--verify", "--quiet", f"refs/heads/{name}"]):
-                # the deleted branch's actual tip is the HEAD position right before this checkout,
-                # which is the next entry chronologically older
                 tip_sha = log[i + 1][0] if i + 1 < len(log) else sha
                 cands.append((name, tip_sha))
 
@@ -466,8 +468,134 @@ def recover_staged():
     print(f"{G}written to {dest}{X}")
 
 
+def find_lost_commit():
+    term = input("search term (part of commit message): ").strip()
+    if not term:
+        return
+    found = {}
+    for sha, _ in reflog():
+        msg = out(["git", "log", "-1", "--format=%s", sha])
+        if term.lower() in msg.lower():
+            found[sha] = (msg, "reflog")
+    for sha, msg in dangling():
+        if term.lower() in msg.lower():
+            found[sha] = (msg, "dangling")
+    raw = out(["git", "log", "--all", "-i", f"--grep={term}", "--format=%H %s"])
+    for line in raw.splitlines():
+        if " " in line:
+            sha, msg = line.split(" ", 1)
+            if sha not in found:
+                found[sha] = (msg, "branch history")
+    if not found:
+        print(f"no commits found matching '{term}'")
+        return
+    items = list(found.items())
+    print(f"\n{W}commits matching '{term}':{X}\n")
+    for i, (sha, (msg, where)) in enumerate(items, 1):
+        print(f"  {G}{i:>2}.{X} {sha[:8]}  {D}[{where}]{X}  {msg}")
+    c = input(f"\n{B}cherry-pick which onto current branch? (n to cancel): {X}").strip()
+    if not c.isdigit() or not (1 <= int(c) <= len(items)):
+        return
+    sha = items[int(c) - 1][0]
+    if not confirm(f"cherry-pick {sha[:8]}?"):
+        return
+    b = backup()
+    sh(["git", "cherry-pick", sha], check=True)
+    print(f"{G}done.{X}")
+    print(f"backup: {D}{b}{X}")
+    print(f"to undo: {D}git reset --hard {b}{X}")
+
+
+def undo_orig_head():
+    orig, code = sh(["git", "rev-parse", "ORIG_HEAD"])
+    if code != 0 or not orig:
+        print("ORIG_HEAD is not set — no recent pull, merge, or rebase to undo")
+        return
+    cur = out(["git", "rev-parse", "HEAD"])
+    cur_msg = out(["git", "log", "-1", "--format=%s", cur])
+    orig_msg = out(["git", "log", "-1", "--format=%s", orig])
+    print(f"\ncurrent HEAD: {cur[:8]} — {cur_msg}")
+    print(f"ORIG_HEAD:    {orig[:8]} — {orig_msg}")
+    print("\nthis will reset back to ORIG_HEAD (before the pull/merge/rebase)")
+    if not confirm("proceed?"):
+        return
+    b = backup()
+    sh(["git", "reset", "--hard", orig], check=True)
+    print(f"{G}done.{X}")
+    print(f"backup: {D}{b}{X}")
+    print(f"to undo: {D}git reset --hard {b}{X}")
+
+
+def show_recoverable():
+    print(f"\n{W}everything that looks recoverable:{X}\n")
+    found_any = False
+    log = reflog()[:20]
+    if log:
+        found_any = True
+        print(f"{W}recent reflog states:{X}")
+        for sha, action in log:
+            print(f"  {D}{sha[:8]}{X}  {humanize(action)}")
+        print()
+    raw, _ = sh(["git", "fsck", "--no-reflogs", "--lost-found"])
+    commits = []
+    blobs = []
+    for line in raw.splitlines():
+        if "dangling commit" in line:
+            sha = line.split()[-1]
+            msg = out(["git", "log", "-1", "--format=%s", sha])
+            commits.append((sha, msg))
+        elif "dangling blob" in line:
+            bsha = line.split()[-1]
+            content = out(["git", "cat-file", "-p", bsha])
+            preview = content[:60].replace("\n", "↵")
+            blobs.append((bsha, preview))
+    if commits:
+        found_any = True
+        print(f"{W}dangling commits:{X}")
+        for sha, msg in commits:
+            print(f"  {D}{sha[:8]}{X}  {msg}")
+        print()
+    if blobs:
+        found_any = True
+        print(f"{W}dangling blobs (staged content never committed):{X}")
+        for sha, preview in blobs:
+            print(f"  {D}{sha[:8]}{X}  {preview}")
+        print()
+    if not found_any:
+        print("nothing obviously recoverable found")
+
+
+def cleanup_backups():
+    branches = [b.strip().lstrip("* ") for b in out(["git", "branch"]).splitlines()]
+    backups = [b for b in branches if b.startswith("unfuck-backup/")]
+    if not backups:
+        print("no backup branches found")
+        return
+    print(f"\n{W}backup branches:{X}\n")
+    for i, b in enumerate(backups, 1):
+        subject = out(["git", "log", "-1", "--format=%s", b])
+        print(f"  {G}{i}.{X} {b}  {D}({subject}){X}")
+    print(f"\n  {G}a.{X} delete all")
+    c = input(f"\n{B}delete which? (number, 'a' for all, n to cancel): {X}").strip().lower()
+    if not c or c == "n":
+        return
+    if c == "a":
+        to_delete = backups
+    elif c.isdigit() and 1 <= int(c) <= len(backups):
+        to_delete = [backups[int(c) - 1]]
+    else:
+        print("cancelled")
+        return
+    for b in to_delete:
+        sh(["git", "branch", "-D", b], check=True)
+        print(f"deleted {b}")
+    print(f"{G}done.{X}")
+
+
 def menu(findings):
     items = []
+    if "orig_head" in findings:
+        items.append(("undo the pull/merge/rebase that just messed up my branch", undo_orig_head))
     if "possible_lost" in findings:
         items.append(("recover commits lost after a rebase or reset", recover_lost_commits))
     else:
@@ -491,6 +619,11 @@ def menu(findings):
         items.append(("undo a bad merge", undo_merge))
     if "lost_staged" not in findings:
         items.append(("recover staged changes that were lost", recover_staged))
+    if "orig_head" not in findings:
+        items.append(("undo a pull or merge that went wrong", undo_orig_head))
+    items.append(("find a lost commit by message", find_lost_commit))
+    items.append(("show me everything that's recoverable", show_recoverable))
+    items.append(("clean up old backup branches", cleanup_backups))
     items.append(("show me what happened recently (plain English)", recent_history))
     items.append(("quit", lambda: sys.exit(0)))
 
@@ -507,10 +640,49 @@ def menu(findings):
         print("not a valid choice")
 
 
+def print_help():
+    print("git-unfuck — interactive git disaster recovery")
+    print()
+    print("usage: git unfuck [command]")
+    print()
+    print("  (no command)   show the interactive recovery menu")
+    print("  undo           undo last commit, keep changes staged")
+    print("  recover        pick a reflog state to reset to")
+    print("  history        print recent history in plain English")
+    print("  --version      print version")
+    print("  --help         print this message")
+    print()
+    print("what it handles:")
+    print("  detached HEAD, stuck merge/rebase/cherry-pick, lost commits,")
+    print("  lost stashes, lost staged changes, deleted branches, commits on")
+    print("  the wrong branch, bad merges, accidentally committed files,")
+    print("  deleted files, lost commit search, pull/merge undo via ORIG_HEAD,")
+    print("  full recoverability report, backup branch cleanup")
+
+
 def main():
+    args = sys.argv[1:]
+    if args and args[0] in ("--help", "-h"):
+        print_help()
+        return
+    if args and args[0] in ("--version", "-v"):
+        print("git-unfuck 0.2.0")
+        return
     if not in_repo():
         print(f"{R}not a git repository{X}", file=sys.stderr)
         sys.exit(1)
+    if args:
+        cmd = args[0]
+        if cmd == "undo":
+            soft_undo()
+        elif cmd == "recover":
+            recover_lost_commits()
+        elif cmd == "history":
+            recent_history()
+        else:
+            print(f"{R}unknown subcommand: {cmd}{X}", file=sys.stderr)
+            sys.exit(1)
+        return
     print(f"{D}scanning your repo...{X}")
     findings = scan()
     menu(findings)

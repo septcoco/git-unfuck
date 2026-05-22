@@ -30,6 +30,18 @@ $ git unfuck
 
 That's it. It scans the repo and offers options.
 
+Power users can skip the menu with direct subcommands:
+
+```
+git unfuck undo       # undo last commit, keep changes staged
+git unfuck recover    # pick a reflog state to reset to
+git unfuck history    # print recent history in plain English
+git unfuck --help
+git unfuck --version
+```
+
+Colors are automatically disabled when stdout is not a terminal or when `NO_COLOR` is set.
+
 ## What it handles
 
 - commits lost after a reset or rebase
@@ -43,6 +55,10 @@ That's it. It scans the repo and offers options.
 - restore a file deleted in an earlier commit
 - undo a bad merge (reset if it's HEAD, revert if it's in history)
 - recover staged changes lost to a hard reset (via dangling blobs)
+- find a lost commit by searching the reflog, dangling commits, and all branches by message
+- undo a pull, merge, or rebase that just went wrong (via ORIG_HEAD)
+- "show me everything recoverable" — reflog states, dangling commits, dangling blobs in one report
+- clean up accumulated `unfuck-backup/*` branches
 - "what the hell just happened" -> plain English summary of recent activity
 
 ## Safety
