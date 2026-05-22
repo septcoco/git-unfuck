@@ -8,15 +8,15 @@ It reads your reflog and dangling objects, figures out the most likely scenarios
 ## Install
 
 ```sh
-mkdir -p ~/bin
-curl -fsSL https://raw.githubusercontent.com/septcoco/git-unfuck/main/git-unfuck -o ~/bin/git-unfuck
-chmod +x ~/bin/git-unfuck
+mkdir -p ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/septcoco/git-unfuck/main/git-unfuck -o ~/.local/bin/git-unfuck
+chmod +x ~/.local/bin/git-unfuck
 ```
 
-Then add `~/bin` to your PATH if it isn't already. On macOS with zsh:
+Then add `~/.local/bin` to your PATH if it isn't already. On macOS with zsh:
 
 ```sh
-echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
@@ -37,6 +37,12 @@ That's it. It scans the repo and offers options.
 - detached HEAD (you're not on a branch and don't know how you got there)
 - stashes you dropped
 - merges, rebases, or cherry-picks you're stuck in
+- committed to the wrong branch — move the last N commits elsewhere
+- undo the last commit but keep the changes staged
+- remove a file you accidentally committed (secrets, large files) and optionally .gitignore it
+- restore a file deleted in an earlier commit
+- undo a bad merge (reset if it's HEAD, revert if it's in history)
+- recover staged changes lost to a hard reset (via dangling blobs)
 - "I don't even know what happened, just tell me" — plain English summary of recent activity
 
 ## Safety
