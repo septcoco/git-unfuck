@@ -37,13 +37,13 @@ That's it. It scans the repo and offers options.
 - detached HEAD (you're not on a branch and don't know how you got there)
 - stashes you dropped
 - merges, rebases, or cherry-picks you're stuck in
-- committed to the wrong branch — move the last N commits elsewhere
+- committed to the wrong branch -> move the last N commits elsewhere
 - undo the last commit but keep the changes staged
 - remove a file you accidentally committed (secrets, large files) and optionally .gitignore it
 - restore a file deleted in an earlier commit
 - undo a bad merge (reset if it's HEAD, revert if it's in history)
 - recover staged changes lost to a hard reset (via dangling blobs)
-- "I don't even know what happened, just tell me" — plain English summary of recent activity
+- "what the hell just happened" -> plain English summary of recent activity
 
 ## Safety
 
